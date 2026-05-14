@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YCYW Chat — PoC</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: system-ui, sans-serif;
+            background: #f0f2f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .chat-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            width: 480px;
+            max-width: 95vw;
+            overflow: hidden;
+        }
+
+        .chat-header {
+            background: #1a56db;
+            color: white;
+            padding: 16px 20px;
+            font-weight: 600;
+            font-size: 1rem;
+        }
+
+        .chat-header span { opacity: 0.8; font-size: 0.8rem; display: block; font-weight: 400; }
+
+        #login-panel, #chat-panel { padding: 24px; }
+
+        #chat-panel { display: none; }
+
+        label { display: block; margin-bottom: 6px; font-size: 0.875rem; color: #374151; font-weight: 500; }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            margin-bottom: 12px;
+            outline: none;
+        }
+
+        input[type="text"]:focus { border-color: #1a56db; box-shadow: 0 0 0 3px rgba(26,86,219,0.15); }
+
+        button {
+            background: #1a56db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 500;
+            width: 100%;
+            transition: background 0.2s;
+        }
+
+        button:hover { background: #1e40af; }
+        button:disabled { background: #9ca3af; cursor: not-allowed; }
+
+        #messages {
+            height: 320px;
+            overflow-y: auto;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .message {
+            padding: 8px 12px;
+            border-radius: 8px;
+            max-width: 85%;
+            font-size: 0.875rem;
+            line-height: 1.4;
+        }
+
+        .message.own {
+            background: #1a56db;
+            color: white;
+            align-self: flex-end;
+        }
+
+        .message.other {
+            background: #f3f4f6;
+            color: #111827;
+            align-self: flex-start;
+        }
+
+        .message.system {
+            background: #fef3c7;
+            color: #92400e;
+            align-self: center;
+            font-size: 0.8rem;
+            font-style: italic;
+            text-align: center;
+        }
+
+        .message .sender { font-weight: 600; font-size: 0.75rem; margin-bottom: 2px; opacity: 0.8; }
+
+        .input-row { display: flex; gap: 8px; }
+        .input-row input { margin-bottom: 0; flex: 1; }
+        .input-row button { width: auto; padding: 10px 16px; }
+
+        #status {
+            font-size: 0.75rem;
+            color: #6b7280;
+            margin-top: 8px;
+            text-align: center;
+        }
+
+        #status.connected { color: #059669; }
+        #status.error { color: #dc2626; }
+    </style>
+</head>
+<body>
+
+<main class="chat-container" role="main">
+    <header class="chat-header">
+        💬 Your Car Your Way — Chat PoC
+        <span>Preuve de concept WebSocket STOMP</span>
+    </header>
+
+    <!-- Écran de connexion -->
+    <section id="login-panel" aria-label="Connexion au chat">
+        <label for="username">Votre pseudo</label>
+        <input type="text" id="username" placeholder="Ex : Alice" maxlength="30" autocomplete="off">
+        <button id="connect-btn" onclick="connect()">Rejoindre la salle</button>
+    </section>
+
+    <!-- Salle de chat -->
+    <section id="chat-panel" aria-label="Salle de chat">
+        <div id="messages" role="log" aria-live="polite" aria-label="Messages du chat"></div>
+
+        <div class="input-row">
+            <label for="message-input" class="sr-only">Message</label>
+            <input type="text" id="message-input" placeholder="Écrivez un message…" maxlength="500"
+                   onkeydown="if(event.key==='Enter') sendMessage()">
+            <button onclick="sendMessage()" id="send-btn">Envoyer</button>
+        </div>
+
+        <p id="status"></p>
+    </section>
+</main>
+
+<!-- SockJS + STOMP via CDN -->
+<script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+
+<script>
+    let stompClient = null;
+    let currentUser = null;
+
+    function connect() {
+        const usernameInput = document.getElementById('username');
+        const username = usernameInput.value.trim();
+
+        if (!username) {
+            usernameInput.focus();
+            return;
+        }
+
+        currentUser = username;
+        document.getElementById('connect-btn').disabled = true;
+        setStatus('Connexion en cours…', '');
+
+        // Crée la connexion WebSocket via SockJS (fallback si WebSocket non dispo)
+        const socket = new SockJS('/ws');
+        stompClient = Stomp.over(socket);
+        stompClient.debug = null; // Désactive les logs STOMP en console
+
+        stompClient.connect({}, function () {
+            // Abonnement au topic de diffusion des messages
+            stompClient.subscribe('/topic/messages', function (frame) {
+                const message = JSON.parse(frame.body);
+                displayMessage(message);
+            });
+
+            // Notification d'arrivée dans la salle
+            stompClient.send('/app/chat.join', {}, JSON.stringify({
+                sender: currentUser,
+                content: currentUser + ' a rejoint la salle.',
+                type: 'JOIN'
+            }));
+
+            // Affiche le panneau de chat
+            document.getElementById('login-panel').style.display = 'none';
+            document.getElementById('chat-panel').style.display = 'block';
+            document.getElementById('message-input').focus();
+            setStatus('✅ Connecté en tant que ' + currentUser, 'connected');
+
+        }, function () {
+            setStatus('❌ Connexion échouée. Vérifiez que le serveur est démarré.', 'error');
+            document.getElementById('connect-btn').disabled = false;
+        });
+    }
+
+    function sendMessage() {
+        const input = document.getElementById('message-input');
+        const content = input.value.trim();
+
+        if (!content || !stompClient || !stompClient.connected) return;
+
+        stompClient.send('/app/chat.send', {}, JSON.stringify({
+            sender: currentUser,
+            content: content,
+            type: 'CHAT'
+        }));
+
+        input.value = '';
+        input.focus();
+    }
+
+    function displayMessage(message) {
+        const container = document.getElementById('messages');
+        const div = document.createElement('div');
+
+        if (message.type === 'JOIN' || message.type === 'LEAVE') {
+            div.className = 'message system';
+            div.textContent = message.content;
+        } else {
+            const isOwn = message.sender === currentUser;
+            div.className = 'message ' + (isOwn ? 'own' : 'other');
+
+            if (!isOwn) {
+                const senderEl = document.createElement('div');
+                senderEl.className = 'sender';
+                senderEl.textContent = message.sender;
+                div.appendChild(senderEl);
+            }
+
+            const text = document.createElement('div');
+            text.textContent = message.content;
+            div.appendChild(text);
+        }
+
+        container.appendChild(div);
+        container.scrollTop = container.scrollHeight;
+    }
+
+    function setStatus(text, cls) {
+        const el = document.getElementById('status');
+        if (el) { el.textContent = text; el.className = cls; }
+    }
+
+    // Connexion via Entrée sur le champ pseudo
+    document.getElementById('username').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') connect();
+    });
+</script>
+
+</body>
+</html>
