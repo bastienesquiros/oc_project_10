@@ -10,16 +10,182 @@
 
 ## Sommaire
 
-1. [Spécifications techniques](#1-spécifications-techniques)
-2. [Architecture applicative](#2-architecture-applicative)
-3. [Modèle de données](#3-modèle-de-données)
-4. [Choix technologiques argumentés](#4-choix-technologiques-argumentés)
-5. [Intégration des composants tiers](#5-intégration-des-composants-tiers)
-6. [Bonnes pratiques transverses](#6-bonnes-pratiques-transverses)
+1. [Audit de l'existant](#1-audit-de-lexistant)
+2. [Spécifications techniques](#2-spécifications-techniques)
+3. [Architecture applicative](#3-architecture-applicative)
+4. [Modèle de données](#4-modèle-de-données)
+5. [Choix technologiques argumentés](#5-choix-technologiques-argumentés)
+6. [Intégration des composants tiers](#6-intégration-des-composants-tiers)
+7. [Bonnes pratiques transverses](#7-bonnes-pratiques-transverses)
 
 ---
 
-## 1. Spécifications techniques
+## 1. Audit de l'existant
+
+### 1.1 Objectif de l'audit
+
+Cet audit évalue objectivement l'état des applications web existantes de Your Car Your Way, afin d'identifier les actifs réutilisables, les dettes techniques à traiter et les contraintes à intégrer dans la conception de la nouvelle solution centralisée.
+
+> ⚠️ L'audit décrit l'existant tel qu'il est — il ne propose pas encore de solution. Les recommandations sont développées dans les sections suivantes.
+
+### 1.2 Critères d'évaluation
+
+| Critère | Définition |
+|---|---|
+| **Maintenabilité** | Capacité à corriger, faire évoluer et comprendre le code sans effort disproportionné. Inclut la lisibilité, la modularité, la couverture de tests et la gestion des dépendances. |
+| **Performance** | Capacité à répondre aux requêtes dans des délais acceptables, y compris en charge élevée (pics saisonniers). Mesurée par le débit (req/s), le taux d'erreur et les temps de réponse. |
+| **Évolutivité (Scalabilité)** | Capacité à faire croître le système horizontalement ou verticalement pour absorber une augmentation de la charge ou l'ajout de nouvelles fonctionnalités sans refonte majeure. |
+| **Sécurité** | Niveau de protection des données utilisateurs (authentification, chiffrement, gestion des secrets, surface d'attaque via les dépendances). |
+| **Fiabilité** | Capacité à rester disponible, à récupérer rapidement après un incident, et à garantir l'intégrité des données (MTTR, taux de disponibilité, backups). |
+| **Interopérabilité** | Capacité des applications à échanger des données entre elles, à exposer des APIs cohérentes et à s'intégrer avec des composants tiers. |
+
+### 1.3 Cartographie de l'existant
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     YOUR CAR YOUR WAY — EXISTANT                    │
+│                                                                     │
+│  ┌─────────────────────────────────┐   ┌──────────────────────────┐ │
+│  │      CLUSTER OVH (Europe)       │   │    CLUSTER AWS/AZURE     │ │
+│  │                                 │   │                          │ │
+│  │  ┌────────┐  ┌────────────────┐ │   │  ┌──────┐  ┌─────────┐  │ │
+│  │  │   FR   │  │  DE / ES / IT  │ │   │  │  UK  │  │   CA    │  │ │
+│  │  │Java EE │  │    Java EE     │ │   │  │ PHP  │  │Node.js  │  │ │
+│  │  │JSP/JSF │  │   JSP/JSF      │ │   │  │Laravel│  │React   │  │ │
+│  │  │ BDD FR │  │  BDD DE/ES/IT  │ │   │  │BDD UK│  │BDD CA  │  │ │
+│  │  └────────┘  └────────────────┘ │   │  └──────┘  └─────────┘  │ │
+│  │                                 │   │                          │ │
+│  │         Déploiements manuels    │   │  ┌─────────────────────┐ │ │
+│  └─────────────────────────────────┘   │  │          US         │ │ │
+│                                        │  │  Spring Boot        │ │ │
+│                                        │  │  Angular / Azure    │ │ │
+│                                        │  │  BDD US (non redond)│ │ │
+│                                        │  └─────────────────────┘ │ │
+│                                        └──────────────────────────┘ │
+│                                                                     │
+│  ← Aucune API commune ─ Aucun schéma partagé ─ Aucun SSO →         │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+| Pays | Frontend | Backend | Hébergement | BDD | Déploiement |
+|---|---|---|---|---|---|
+| France | JSP/JSF | Java EE | OVH | Propre | Manuel |
+| Allemagne | JSP/JSF | Java EE | OVH | Propre | Manuel |
+| Espagne | JSP/JSF | Java EE | OVH | Propre | Manuel |
+| Italie | JSP/JSF | Java EE | OVH | Propre | Manuel |
+| Royaume-Uni | PHP/Laravel | PHP/Laravel | AWS EC2 | Propre | Partiellement auto |
+| Canada | React | Node.js | AWS | Propre | Partiellement auto |
+| États-Unis | Angular | Spring Boot | Azure (containers) | Propre | CI/CD partiel |
+
+**Observation :** 6 stacks techniques distinctes, 6 bases de données indépendantes, 0 API commune.
+
+### 1.4 Analyse par critère
+
+#### Maintenabilité
+
+Les applications DE/ES/IT sont des forks du code FR, engendrant une divergence progressive : corrections de bugs et évolutions à appliquer manuellement sur chaque branche.
+
+| Application | % dépendances vulnérables |
+|---|---|
+| France | **41 %** 🔴 |
+| Allemagne / Espagne / Italie | **35–38 %** 🔴 |
+| Canada | 22 % 🟡 |
+| Royaume-Uni | 18 % 🟡 |
+| États-Unis | **11 %** 🟢 |
+
+Délai de stabilisation post-release : **3,4 jours** sur OVH vs 1,7 jour sur cloud. **Verdict : ❌ Non satisfaisant sur OVH.**
+
+#### Performance
+
+Les applications OVH plafonnent à **~150 req/s** (vs 350 req/s pour l'app US). Taux d'erreur en pic saisonnier : jusqu'à **4 %** sur OVH (1 transaction sur 25 en échec) vs 0,8 % sur US. **Verdict : ❌ Insuffisant sur OVH.**
+
+#### Évolutivité
+
+| Cluster | Scalabilité horizontale | Conteneurisation | CI/CD | Taux succès déploiement |
+|---|---|---|---|---|
+| OVH (FR/DE/ES/IT) | ❌ Aucune | ❌ Non | ❌ Manuel | **82 %** 🔴 |
+| AWS (UK/CA) | ⚠️ Partielle | ❌ Non | ⚠️ Partielle | 91 % 🟡 |
+| Azure (US) | ✅ Oui | ✅ Oui | ⚠️ Partielle | 91 % 🟡 |
+
+**Verdict : ❌ Critique sur OVH. ✅ Acceptable uniquement pour US.**
+
+#### Sécurité
+
+| Application | Hashage MDP | TLS | Secrets |
+|---|---|---|---|
+| FR/DE/ES/IT | **SHA-1** 🔴 obsolète | TLS 1.0 🔴 | Fichiers config en clair 🔴 |
+| UK | bcrypt (cost 10) 🟢 | TLS 1.2+ 🟢 | Env vars AWS 🟡 |
+| CA | argon2id 🟢 | TLS 1.2+ 🟢 | Env vars AWS 🟡 |
+| US | bcrypt (strength 12) 🟢 | TLS 1.2+ 🟢 | Azure KeyVault (partiel) 🟢 |
+
+**Verdict : 🔴 Critique sur FR/DE/ES/IT. Satisfaisant uniquement sur US.**
+
+#### Fiabilité
+
+| Application | Disponibilité | MTTR | Indisponibilité mensuelle | Backup testé |
+|---|---|---|---|---|
+| FR/DE/ES/IT | 97,2 % 🔴 | ~2h45 | 21–28 min | ❌ Jamais |
+| UK / CA | 98,6 / 98,1 % 🟡 | ~1h10 | 9–16 min | ❌ Irrégulier |
+| US | **98,9 %** 🟢 | ~1h10 | 7 min | ✅ Tous les 90j |
+
+Cible SLA : 99,9 % — aucune application ne l'atteint. **Verdict : 🔴 Insuffisant partout.**
+
+#### Interopérabilité
+
+Aucune API commune, schémas de données divergents par pays, partage d'information inexistant ou manuel. **Verdict : 🔴 Blocage fondamental à l'internationalisation.**
+
+### 1.5 Synthèse Forces / Faiblesses / Contraintes
+
+**Forces (actifs à capitaliser)**
+
+| Force | Localisation | Intérêt |
+|---|---|---|
+| Conteneurisation | US (Azure) | Modèle de déploiement à généraliser |
+| Spring Boot | US | Stack Java moderne, éprouvée |
+| BCrypt / Argon2id | UK, CA, US | Algos de hashage à adopter globalement |
+| Azure KeyVault | US | Gestion des secrets à étendre |
+| React | CA | Compétences frontend modernes disponibles |
+| Base fonctionnelle riche | FR | Référentiel métier le plus complet |
+
+**Faiblesses (dettes à corriger)**
+
+| Faiblesse | Criticité |
+|---|---|
+| SHA-1 mots de passe (FR/DE/ES/IT) | 🔴 Critique |
+| TLS 1.0 actif (FR, IT) | 🔴 Critique |
+| Secrets en clair sur OVH | 🔴 Critique |
+| 35–41 % de dépendances vulnérables | 🔴 Critique |
+| Déploiements manuels — 18 % d'échec | 🔴 Haute |
+| Aucune redondance applicative OVH | 🔴 Haute |
+| Backups non testés | 🔴 Haute |
+| Aucune API commune | 🟡 Haute |
+
+**Contraintes (à intégrer dans la conception)**
+
+| Contrainte | Nature |
+|---|---|
+| Migration de 6 schémas de données divergents | Technique |
+| Continuité de service pendant la transition | Opérationnelle |
+| Expertise Java EE dominante → montée en compétences | Humaine |
+| RGPD multi-pays, PCI DSS | Réglementaire |
+| Multi-timezone, multi-devise | Fonctionnelle |
+
+### 1.6 Conclusion de l'audit
+
+| Critère | FR/DE/ES/IT | UK | CA | US |
+|---|---|---|---|---|
+| Maintenabilité | 🔴 | 🟡 | 🟡 | 🟢 |
+| Performance | 🔴 | 🟡 | 🟡 | 🟢 |
+| Évolutivité | 🔴 | 🟡 | 🟡 | 🟢 |
+| Sécurité | 🔴 | 🟢 | 🟢 | 🟢 |
+| Fiabilité | 🔴 | 🟡 | 🟡 | 🟢 |
+| Interopérabilité | 🔴 | 🔴 | 🔴 | 🔴 |
+
+L'audit révèle une fracture nette entre les applications historiques OVH et les applications cloud. **L'interopérabilité est universellement absente** : ce constat valide à lui seul la décision de concevoir une nouvelle application centralisée plutôt que de tenter une fédération de l'existant. L'application US sert de référence pour les choix d'infrastructure de la solution cible.
+
+---
+
+## 2. Spécifications techniques
 
 ### 1.1 Objectifs techniques
 
@@ -60,7 +226,7 @@ Les spécifications techniques découlent directement des user stories et des co
 
 ---
 
-## 2. Architecture applicative
+## 3. Architecture applicative
 
 ### 2.1 Vue d'ensemble — Diagramme de composants
 
@@ -245,7 +411,7 @@ sequenceDiagram
 
 ---
 
-## 3. Modèle de données
+## 4. Modèle de données
 
 ### 3.1 Diagramme Entité-Relation (ERD)
 
@@ -379,7 +545,7 @@ erDiagram
 
 ---
 
-## 4. Choix technologiques argumentés
+## 5. Choix technologiques argumentés
 
 ### 4.1 Frontend — Next.js (React / TypeScript)
 
@@ -472,7 +638,7 @@ Les tâches asynchrones (envoi d'emails, événements post-paiement) sont géré
 
 ---
 
-## 5. Intégration des composants tiers
+## 6. Intégration des composants tiers
 
 ### 5.1 Vue d'ensemble des intégrations
 
@@ -629,7 +795,7 @@ Les applications d'agence s'authentifient via **clé API** (header `X-API-Key`) 
 
 ---
 
-## 6. Bonnes pratiques transverses
+## 7. Bonnes pratiques transverses
 
 ### 6.1 Sécurité
 
