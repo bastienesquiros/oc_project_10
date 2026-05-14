@@ -8,13 +8,6 @@ import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 
-/**
- * Écoute les événements de déconnexion WebSocket.
- *
- * Quand un client ferme son onglet ou perd la connexion, Spring émet
- * un SessionDisconnectEvent. Ce listener récupère le pseudo stocké
- * en session et notifie tous les participants du départ.
- */
 @Component
 public class WebSocketEventListener {
 

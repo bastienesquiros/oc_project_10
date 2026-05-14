@@ -1,11 +1,5 @@
 package com.yourcaryourway.chat.model;
 
-/**
- * Représente un message échangé dans la salle de chat.
- *
- * Cette classe est sérialisée/désérialisée automatiquement en JSON
- * par Jackson lors des échanges WebSocket STOMP.
- */
 public class ChatMessage {
 
     private MessageType type;

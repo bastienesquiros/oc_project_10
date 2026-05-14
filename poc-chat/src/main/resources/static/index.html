@@ -157,7 +157,6 @@
     </section>
 </main>
 
-<!-- SockJS + STOMP via CDN -->
 <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
 
@@ -178,26 +177,22 @@
         document.getElementById('connect-btn').disabled = true;
         setStatus('Connexion en cours…', '');
 
-        // Crée la connexion WebSocket via SockJS (fallback si WebSocket non dispo)
         const socket = new SockJS('/ws');
         stompClient = Stomp.over(socket);
-        stompClient.debug = null; // Désactive les logs STOMP en console
+        stompClient.debug = null;
 
         stompClient.connect({}, function () {
-            // Abonnement au topic de diffusion des messages
             stompClient.subscribe('/topic/messages', function (frame) {
                 const message = JSON.parse(frame.body);
                 displayMessage(message);
             });
 
-            // Notification d'arrivée dans la salle
             stompClient.send('/app/chat.join', {}, JSON.stringify({
                 sender: currentUser,
                 content: currentUser + ' a rejoint la salle.',
                 type: 'JOIN'
             }));
 
-            // Affiche le panneau de chat
             document.getElementById('login-panel').style.display = 'none';
             document.getElementById('chat-panel').style.display = 'block';
             document.getElementById('message-input').focus();
@@ -257,7 +252,6 @@
         if (el) { el.textContent = text; el.className = cls; }
     }
 
-    // Connexion via Entrée sur le champ pseudo
     document.getElementById('username').addEventListener('keydown', function (e) {
         if (e.key === 'Enter') connect();
     });
